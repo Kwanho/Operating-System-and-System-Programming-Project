@@ -1,0 +1,105 @@
+﻿• The changes you made since your initial design doc and why you made them (feel free to re-iterate what you discussed with your TA in the design review) 
+
+
+Syscall Handler Changes (Daniela):
+In our design doc we didn’t really explain syscall_handler in much detail, but essentially we have an if statement for each syscall and for each of them we feed the return register EAX the proper value. For most of the syscalls we have separate helper functions to handle each syscall individually where we execute all that needs to be done per syscall and set the helper function’s return value to be the value in EAX. 
+
+
+Argument Passing Changes (Daniel):
+        The high-level idea behind argument passing was followed: tokenize the input and load it onto the stack.  Upon implementation there was some misconceptions of how this would be implemented.  Originally we emphasized properly parsing for multiple spaces and checking for multiple spaces without thinking about how to properly load onto the stack.  In our design doc we referenced using a regular expression “//s+”; however, strtok_r does not allow for regular expressions we simply used a single space.  Additionally, due to behavior of strtok_r looking one index past the token, there was some weird edge cases causing our initial parse to fail on certain arguments.  To fix this we used strchr to identify the location of the token and then copy this over to a new array.  The last major change we made in our design doc was not copying every argument into the palloc’d space at the same time, but instead putting it directly into the stack as we tokenize. Other than those changes, loading the stack was fairly simple and was mostly just doing a simple operation and using memcpy to load it onto the esp position.
+
+
+Memory Validation Changes (Shawn):
+We were correct in our original design doc, where we identified the three main cases that we need to check in order to validate a pointer to memory. We ensure the pointer is not NULL, that it points to mapped memory, and that that mapped memory is in user space. One additional check that we did not have in our design doc was that we must also ensure that the user pointer we receive resolves to a page in kernel memory (and to throw an error if it resolves to a page in user memory). In our Design Review, Aleks recommended that we check the entire user chunk of memory in page increments. We implemented this in our project originally, but later found that it was unnecessary for this project. We removed the logic to reduce unnecessary complexity.
+
+
+Memory Syscall Changes (Daniel):
+        The design doc did not touch on memory syscalls too much other than the design of the data structure for file descriptors and files.  In order to implement the functionality of the memory syscalls it mostly relied on helper functions provided in the “filesys” directory.  We were able to utilize these to actually perform the open, close, write, read, etc operations once the files had been validated using the validate_mem(void *) function we implemented.  
+
+
+Memory/File Data Structure Changes (Shawn):
+We originally had the idea of making a list of file descriptors, where each list elem was a single fd. However, in our design review, Aleks said that we could greatly simplify our data structure by using a hash map, where each key was an fd value, and each value was a file pointer. After looking at the hashmap data structure, we decided to simplify our implementation of file descriptors even further, where it now composes of a single list of 129 indices (0-128). Indices 0-127 consist of file pointers for fd’s 0-127, or NULL if no file descriptor has been created/opened for that value. Index 128 is reserved for keeping track of the executable file that must be denied/allowed writes at specific times.
+
+
+Synchronization in Memory Changes (Daniel):
+        Originally we assumed we could just perform file io by calling the built in operations, but quickly realized we needed to add some synchronization to prevent multiple threads/processes from doing io on the same file which could potentially lead to race conditions.  To prevent this, we added a simple io_lock using the built in synchronization provided and locked the file whenever making a call to anything in the filesys directory.  This fixed all synchronization problems. 
+
+
+Exit Changes (Kwanho):
+Our initial thought was to manually set exit_code to 0 if exit was successful and -1 if kernel killed a thread. While we were implementing exit syscall, we figured out that we actually need to use the status passed into the exit syscall and set the return EAX value to it. thread_exit, however, doesn’t take any parameter so we had to create a helper function to update the exit_code  as the status that was passed in.
+
+
+Wait Changes (Kwanho):
+We didn’t discuss about the deletion of wait struct in the design doc. Our wait struct now has ref_count field initialized to 2, representing the number of pointers (one from the parent and one from the child). As each thread terminates its process, we decrement this value in thread_exit. We use ref_lock to ensure only one thread decrements the value at a time. The thread that decrements the ref_count to 0 deletes the wait struct as well as itself.  Also, to prevent calling wait on the same thread more than once, we have a wait_count as a counter which must be set to 0 to proceed in the function.
+
+
+Exec Changes (Kwanho):
+In exec syscall, syscall handler first validate user memory pointer by calling validate_mem and then it calls process_execute. 
+Our old plan was to ensure that we wait until the executable has completed loading, we were going to make the operation atomic by disabling interrupts. Instead, we used exec_sema to make the parent wait in process_execute until the child's load is successful. process_execute calls thread_create and thread_create initializes the thread as well as the wait struct between the parent and the child now, and puts the thread in the ready list for the scheduler so that the child can run. In the skeleton code, after thread_create is done, we come back to the process_execute and return the child’s tid. Since we need to wait until the child loads, this is the correct place to put sema_down() to make the parent wait for the child to run with process-start which does the load operation. In start_process right after the child is done loading, it should put the result in the wait struct and sema_up so that the parent can wake up and react accordingly.
+
+
+Structure Changes (Kwanho):
+
+
+struct thread
+{
+   ...
+   struct wait *parent_wait;     /* pointer to the wait struct between current thread and parent */
+   struct list wait_list;              /* list of wait structs */
+   ...
+}
+
+
+In our design doc, we were adding 4 fields to the thread struct but we now have only 2 extra fields. Every thread have a pointer to a wait struct between itself and its parent thread. wait_list is a list of wait structs between itself and its children.
+
+
+struct wait
+{
+    /* fields needed for wait syscall */
+    struct list_elem elem;         /* list_elem for wait_list of parent thread */
+    tid_t child_tid;                     /* child's tid */
+    struct semaphore sema;    /* semaphore to make parent wait until child's exit */
+    int ref_count;                      /* number of pointers to this wait struct */
+    struct lock ref_lock;            /* to make ref_count decrement atomic */
+    int exit_code;                      /* exit status of child thread */
+    int wait_count;                    /* number of wait syscall */
+
+
+    /* fields needed for child's load */
+    struct semaphore exec_sema;       /* semaphore to make parent wait until child's load */
+    bool load_success;                          /* child saves load result here */
+};
+
+
+We added ref_count which is number of pointers to that wait struct to make sure the last thread that delete the pointer to the struct also delete the wait struct as well. 
+
+
+We also added ref_lock to prevent the possible race condition with ref_count when both parent and child decrement ref_count at the same time. We now require lock before entering critical section so only one thread can decrement the value at a time.
+
+
+wait_count is used to allow wait syscall only once.
+
+
+While we were implementing the code for parent thread to wait in process_execute until it know whether its child’s load was successful or not, we found that we need a place that child can put its load result and parent can also access and read it. We already had wait struct between every parent and child that can be accessed by both. Thus, we added exec_sema that makes parent wait until child’s load and load_success that child writes load result and parent read.
+
+
+
+
+
+
+OTHER - PLEASE ADD ANY MAJOR CHANGES
+
+
+
+
+(EVERYONE)
+• A reflection on the project - what went well, what could be improved? 
+
+
+Compared to Project 1, we did a much better job of making sure everyone understood the majority of project concepts at a reasonable level. As well, we created a more robust plan in our original Design Doc that we mostly deviated from in minor ways. In other words, our original Design Doc was far more comprehensive and closer to the actual solution than our Project 1 Design Doc. We did a better job of spreading out the time in which we work on the project, so we weren’t rushing to get all of our points at the very last minute. We also used Git slightly more effectively this time, and improved our group cohesion.  By utilizing branches much more, we were able to parallelize development on different features that all included different group members. 
+
+
+We can still greatly improve in our allocation of time. In Project 3, we should start even earlier, spread out time even more, and create soft and hard deadlines by which we must get certain parts done and working. An issue we had this time, similar to last time, is that we brought our code together quite late, and spent entire days debugging specific parts that other parts depended upon. This was due to the fact individual features reliant on other features were not tested after being written, and instead waited for reliant features to be finished to allow testing via the autograder.  In the future, using GDB will allow individual components to be tested before reliant pieces of code is done.  
+
+
+Many members still need to learn how to use Git effectively, including branching, merging, and other concepts. We should continue to work on effective communication, so that everyone knows what everyone else is working on so that we can be as efficient as possible. Additionally, we were able to use GDB much more effectively in this project to debug; however, there is still room for improvement.  In the next project, we need to debug in a whole new paradigm: instead of reading through code and using GDB as a last resort, we need to start with GDB for the sake of time.

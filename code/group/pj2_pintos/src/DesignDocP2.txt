@@ -1,0 +1,200 @@
+﻿CS 162
+Project 2: User Programs
+Design Document
+
+
+Fill in the following information:
+
+
+GSI: Aleks
+Group Number: Group 51
+Daniela Kim <danielakim@berkeley.edu>
+Daniel Dobalian <ddobalian@berkeley.edu>
+Kwanho Ryu <ryu7249125@berkeley.edu>
+Shawn D’Souza <1dsouzas@berkeley.edu>
+
+
+Preliminary Questions
+=====================
+
+1)  Please write down any miscellaneous comments or notes for your GSI.
+
+        How does char* aux handle multiple arguments (Context: Argument Passing)?
+
+
+How do we limit how far in physical memory the user can write to?
+
+2)  Currently, process_wait tries to decrement a semaphore called temporary.  Explain why this implementation of process_wait wouldn’t work if the exec system call were implemented.
+
+        Currently without exec system call implemented we cannot create a new process in user program. But when exec is implemented each process can fork their own child process and call exec in newly created process. Since the current implementation use the semaphore called temporary which is global and it’s shared among every processes, an incorrect child could increment the semaphore and wake up the wrong parent.
+
+3)  For checkpoint 1, you are implementing a dummy version of write that prints to stdout.  Describe, in two sentences or less, how a user could break the operating system exploiting this dummy version.
+
+(Based on TA comment on Piazza, ignoring this question)
+
+
+4)  Briefly describe how the syscall interface works.  How does the operating system obtain the syscall arguments passed from userspace?
+
+The syscall comes in through the syscall_handler.  As soon as a user calls the syscall in userspace, it is passed to this function for us to handle. 
+
+
+5)  In filesys.c, you’ll see various filesystem functions that work on struct file objects.  In all modern operating systems, these filesystems operations are abstracted away from userspace code; why would it be a bad idea to expose these operations to users?
+
+        In all modern operating systems, permissions and restrictions are imposed upon the user with respect to particular files. This prevents the user from (either accidentally or intentionally) deleting essential files like those crucial to the functioning of the OS. By exposing these filesystem operations to users, you give the user the ability open and remove such files. Even worse, the user would have the ability to format the entire file system. Therefore, for reasons of safety, security, and stability, it is a good idea to abstract these functions away from userspace code.
+
+6)  Run pintos --gdb -v -k --qemu --filesys-size=2 -p tests/userprog/iloveos -a iloveos -- -q -f run iloveos, and use GDB to print the address of the priority field of idle thread.  Do this again; does the address of the priority field change?  We expect you to be able to use GDB comfortably throughout this project; if you’re struggling with this, we strongly encourage you to come to office hours.
+
+No matter how many time we try, the address of the priority field of idle thread doesn’t change. The address of idle_thread is 0xc0034b4c and 0x1c refers to the address of the prority field with respect to the address of the idle_thread struct.
+
+
+Process Syscalls
+================
+
+7)  Copy here the declaration of each new or changed `struct' or `struct' member, global or static variable, `typedef', or enumeration for implementing halt, exec, exit, and wait.  Briefly identify the purpose of each.
+
+        Add to thread struct:
+
+
+tid_t parent_tid; /* The tid of parent process */
+list children; /* List of child_elems, all children process id/exit status */
+int is_waiting; /* goes high when waiting for child to terminate */
+tid_t waiting_tid; /* thread of child we’re waiting on */
+
+struct child {
+tid_t my_tid;
+struct semaphore; /* Initially set to 0 */
+int exit_status; /* Initially set to -1 in process_create */ 
+struct list_elem elem;
+} /* elements for the children list */
+
+8)  Briefly describe your planned implementation of the "wait" system call and how it interacts with process termination.
+
+        When wait system call is called, a new child struct is created inside the list in parent struct, and initially set the semaphore value of the child struct to 0. The value will be incremented only when child process is terminated (when process_exit function is called).
+
+
+In all cases, we will disable interrupts before we check the case (see below) to make these operations atomic to avoid race conditions. We will re-enable interrupts when we complete the check.
+
+Case Child Alive: 
+
+
+Case Died Normally: 
+When the child process is still alive, wait(pid) waits until the process terminates. When the process terminates normally, it calls exit(status). Within exit(status), we set the exit_status field of the current thread’s corresponding node in the parent’s children list to the status value and sema up the semaphore value so that if there were any waiting process, then it can wake up. wait(pid) then returns this value.
+
+
+Case Died via Kernel:
+If child process is terminated by the kernel, since we set the exit value of that child to be -1 by default, exit(status) is not called, the exit value in parent’s struct is not updated, and wait(pid) returns -1. However, process_exit function is called to terminated the child process so it still sema up when the child process dies.
+
+
+        
+Case Child Already Dead: 
+We check if a child process has already been terminated by checking its semaphore value. If that field is 1, the child process has terminated. In this case, from the parent’s children list, we check that child’s exit status. Thus, the parent is able to retrieve its child’s exit status, or learn that the child was terminated by the kernel.
+
+
+Note: May need to disable interrupts to ensure atomic operations
+
+9)  The "exec" system call returns -1 if loading the new executable fails, so it cannot return before the new executable has completed loading.  How will your code ensure this?  How will the load success/failure status be passed back to the thread that calls "exec"?
+
+        To ensure that we wait until the executable has completed loading, we will make the operation atomic by disabling interrupts.
+
+
+In order to pass back the tid_t to the user mode we will store the return value from process_execute() into the EAX register of struct intr_frame as explained in section 6.1.4.
+
+10)  Consider parent process P with child process C.  How do you ensure proper synchronization and avoid race conditions when P calls wait(C) before C exits?  After C exits?  How do you ensure that all resources are freed in each case?  How about when P terminates without waiting, before C exits?  After C exits?  Are there any special cases?
+
+        We will ensure proper synchronization and avoid race conditions by making the operation where the parent checks if the child is alive or not atomic. Before the check, we will disable interrupts, and we will re-enable them when we are done checking.
+
+
+When a child dies it is imperative that the parent remembers the child’s identification and exit status even after being killed.  This is necessary to handle the case in which wait is called after a child has been killed.  Outside of this “memory” of the dead child, everything else has been forgotten.  In each case mentioned, the child data will not be stored passed the thread exit, we will only store two fields: the child thread identification and the exit status.  Once the parent that holds this information is killed, the stored data will also be released.  
+
+11)  How are you planning to implement reading/writing user memory from the kernel and why did you decide to implement it in this way? 
+
+        In order to perform a read and write we need to go through a translation process of virtual to physical memory inside the kernel.  Essentially, when a user syscall comes in with some memory operation we will resolve it into a physical memory while checking to make sure it is a valid/non-malicious request.  First,  we must check if the pointer is outright null.  In this case it is invalid and error, else continue.  We then will use the functions in pagedir.c to access the user process’ particular page directory that will translate virtual to physical addresses.  
+
+
+At this point we can begin looking translating addresses and performing whatever memory address is required.  Each time we perform a translation, we need to check two specific cases: the memory is not kernel memory and the page directory has a map. 
+We can use pagedir_get_page() function to see if user passes a pointer to the kernel memory or a pointer to unmapped virtual memory. It first checks if user virtual address is a kernel virtual address by calling is_user_vaddr() function. Then it looks up the user virtual memory address in page directory and returns the kernel virtual address corresponding to that physical address. If there’s no corresponding page table entry, we return null since it was a pointer to unmapped virtual memory. If any of cases above is true, the user passed pointer is invalid.
+
+
+We then can get the physical memory address and access the data in the page.  Continue this process for all required data, making sure each time the translation does not violate the two cases. 
+
+
+Argument Passing
+================
+
+12)  Copy here the declaration of each new or changed `struct' or `struct' member, global or static variable, `typedef', or enumeration for argument passing.  Briefly identify the purpose of each.  
+
+#define MAX_ARG_SIZE = 4000;
+list arguments;
+
+
+struct argument {
+        list elem;
+        char* argument;
+} /* node inside list keeping track of each arg */
+
+13)  Briefly describe your planned implementation for argument parsing.  How do you arrange for the elements of argv[] to be in the right order?  How do you avoid overflowing the stack page?
+
+As soon as the arguments come in we use strtok_r to tokenize by space using the regular expression “//s+” to catch the case of a single space or multiple.  As we parse the arguments, we write them to a list of strings that will hold each arg using palloc to get the memory.  This is necessary because we need to load them onto the stack in reverse order.  As we do this we also keep track of how many characters we’ve seen to ensure it does not exceed MAX_ARG_SIZE.  
+
+
+We can then load them onto the kernel stack starting at the PHYS_BASE in reverse order putting each arg at an address word aligned by rounding to a multiple of 4.  Additionally, after the user program is done running we must parse the arguments list and free all strings.  
+
+File Operation Syscalls
+=======================
+
+14)  Copy here the declaration of each new or changed `struct' or `struct' member, global or static variable, `typedef', or enumeration for the file operation syscalls.  Identify the purpose of each in 25 words or less.  
+
+
+Note: Every process should have its own List
+
+
+List open_files; /* this processes list of open files, insert ordered (based on fd value), new file descriptor’s fd value is the lowest unused fd value in the list */
+
+
+Struct open_file {
+        int fd; /* File descriptor value */
+        File* file;
+        list_elem;
+} /* list node for each open file */
+
+
+15)  Describe how file descriptors are associated with open files in your design.  Are file descriptors unique within the entire OS or just within a single process?
+
+Each time open() is called within a process, a new file descriptor is created for that process. If other processes call open() on the same file, each of those processes create a new file descriptor and do not affect the others. Similarly, each process has to independently close the file that they open. Closing a file in one process does not close it for others. Inside a single process opening or modifying a file will have it’s own unique file descriptor. 
+
+
+Our implementation upon an open call will add a list node with the file descriptor and file to a list part of each process.  The file descriptor value is set to the lowest unused fd value in the list (aka Loop through list, find first instance where fd increases by more than one, which indicates an unused fd value. Or if you reach the end of the list, fd = last_elem_in_list.fd + 1).  Once the file is closed, it is removed from this list. 
+
+16)  What advantages or disadvantages can you see to your design for file descriptors?
+
+        The advantage of our design for file descriptors is that we are always efficiently using the available fd values by setting each new file descriptor’s fd value to the lowest unused fd. This is made easier by our maintenance of a list of file descriptors ordered by fd value. We have a simple data structure that organizes all of the available file descriptors and presents them in a way that is easily accessible.
+
+
+The disadvantage is that every time we want to add a new file descriptor, we must take O(n) time to find the appropriate fd value. Similarly, to remove a file descriptor from the list (assuming we don’t have a pointer to the list_elem), we must take O(n) time to loop through the list, find the corresponding list_elem, and call list_remove().
+
+17)  Suppose a system call causes a full page (4,096 bytes) of data to be copied from user space into the kernel.  What is the least and the greatest possible number of inspections of the page table (e.g. calls to pagedir_get_page()) that might result?  What about for a system call that only copies 2 bytes of data?
+
+
+Both in the case of a full page of copied data and only 2 bytes of copied data, the best case would result in a single page table entry. Note that we can’t just get the data from that entry, because if it is invalid, we would get a page fault. So, we must first validate the page table entry (check that what it points to is not in kernel space, and that it is an appropriate mapping between virtual and physical). Once we verify that the entry is valid, we can then get it. The least number of inspections of the page table in both cases is therefore 1, assuming we can check the validity and get the memory in the same inspection operation.
+
+
+The maximum number of inspections for the full page of copied data and the 2 bytes of copied data in both cases is 2. This is because, in both cases, the worst case is that the data doesn’t fit into a single page entry, but instead into two page table entries. Based off of the same assumption that we can check the validity and get the memory in the same inspection operation, each PTE requires 1 inspection. So with 2 entries for the two cases, checking each once results in 2 page table inspections respectively.
+
+
+
+
+---------------Test Cases-------------------
+
+
+Argument Passing
+
+
+* Null case (no arg)
+* Single program, no args
+* Single program, one valid arg
+* Single program, invalid arg
+* Two programs
+* Single program, many args
+* Single program, many args, weird spacing
+* Single program, one arg that is longer than max
+* Single program, many args, longer than max

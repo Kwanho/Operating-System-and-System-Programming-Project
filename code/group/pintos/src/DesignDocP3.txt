@@ -1,0 +1,257 @@
+﻿CS 162
+Project 3: File Systems
+Design Document
+
+
+Fill in the following information:
+
+
+GSI:
+Group Number:
+Daniela Kim <danielakim@berkeley.edu>
+Kwanho Ryu <ryu7249125@berkeley.edu>
+Daniel Dobalian <ddobalian@berkeley.edu>
+Shawn D’Souza <1dsouzas@berkeley.edu>
+
+
+Preliminary Questions
+=====================
+
+1) If you have any preliminary comments on your submission or notes for
+  the TAs please give them here.
+
+In indirect L1 & L2 structs, do we need any metadata?  Reminder to discuss how to traverse and walk through multiple blocks.  Jackson indicated it was already implemented or code was given in section. 
+
+
+In subdirectories, currently fd_table stores pointers to files, but we need it to also work with directories.  Should we change this to store inodes and access the file or directory struct through memory manipulation?
+
+2) Please cite any offline or online sources you consulted while preparing your
+  submission, other than the Pintos documentation, course text, lecture notes,
+  and course staff.
+
+https://www.cs.berkeley.edu/~brewer/cs262/FFS.pdf
+
+
+https://digital-forensics.sans.org/blog/2008/12/24/understanding-indirect-blocks-in-unix-file-systems
+
+
+
+Buffer Cache
+============
+
+3) Copy here the declaration of each new or changed 'struct' or 'struct'
+  member, global or static variable, 'typedef', or enumeration. Identify the
+  purpose of each in 25 words or less.
+
+
+global struct list cache;
+
+
+struct cache_entry
+{
+    struct list_elem elem;              /* Element in inode list. */
+    bool accessed;                        /* True if recently accessed. */
+    bool dirty;                                /* True if modified, false otherwise. */
+    bool in_use;                      /* True while read/write are accessing otherwise false*/
+    bool evicting                    /* True while being evicted otherwise false*/
+
+
+    /* test purpose */
+    int read_cnt                            /* count reads to this cache_entry, initially 0 */
+    int write_cnt                            /* count writes to this cashe_entry, initially 0 */
+};
+
+
+4) Describe how your cache replacement algorithm chooses a cache block to
+  evict.
+   We use “clock” algorithm. Every time clock algorithm is called, we make the “accessed” field of the file block that is being pointed by clock hand 0 and move clock hand forward until it finds a file block with accessed field of 0. This is the “least recently used” file block that we want to evict from the cache.
+
+5) An optional part of this project is making your buffer cache periodically
+  flush dirty blocks to disk. Describe a possible implementation strategy for
+  this feature.
+      Since the timer interrupt is called periodically, a possible implementation is to flush the dirty blocks to disk every time the timer interrupt is called.
+
+6) An optional part of this project is implementing read-ahead caching for
+  files in your buffer cache. Describe a possible implementation strategy for
+  this feature.
+   When a process requests disk block 1 from the file, the process goes to sleep until disk block 1 is read and has data ready for the process. Current implementation without read-ahead returns control to the process immediately when read is done. If we start reading disk block 2 before we give the control back to the process, read-ahead is done asynchronously. No interrupt is needed when reading disk block 2 is complete.
+
+7) When one process is actively reading or writing data in a buffer cache
+  block, how are other processes prevented from evicting that block?
+  Every time the data in a buffer cache block is being read or written to, the “in_use” field is set to true and once the data is done being used, we set “in_use” field back to false. While the “in_use” field is true, the clock algorithm is unable to change its “accessed” field to 0, protecting the data from being evicted from the cache. 
+
+8) During the eviction of a block from the cache, how are other processes
+  prevented from attempting to access the block?
+ We have an “evicting” field that is set to true if the block from the cache is being evicted in which case no attempt to access the block should succeed. Every time clock algorithm attempts to set “accessed” field to 0, the process should check the “evicting” field first. If “evicting” is 1, we don’t set “accessed” field to 0 during the clock algorithm, otherwise set it to 0. Once the eviction is done, the eviction field is set back to false.
+
+Indexed and Extensible Files
+============================
+
+9) Copy here the declaration of each new or changed 'struct' or 'struct' member,
+  global or static variable, 'typedef', or enumeration. Identify the purpose
+  of each in 25 words or less.
+
+
+struct indirect_L1 
+{
+        /* Potentially some meta data */
+        block_sector_t blocks[125];
+};
+
+
+struct indirect_L2
+{
+/* Potentially some meta data */
+        block_sector_t blocks[125];
+};
+
+
+struct inode_disk 
+{
+        /* Provided */
+block_sector_t start;               /* First data sector. */
+off_t length;                       /* File size in bytes. */
+unsigned magic;                     /* Magic number. */
+
+
+        /* Removed by Group 51 */
+uint32_t unused[125];               /* Not used. */
+
+
+        /* Added by Group 51 */
+        block_sector_t *direct[123];
+        block_sector_t *indirect_L1; /* Block contains pointers to data blocks */
+        block_sector_t *indirect_L2; /* Block contains pointers to indirect_L1 blocks, 
+  which themselves contain pointers to data blocks */
+}
+
+
+struct inode
+{
+        /* Provided */
+struct list_elem elem;              /* Element in inode list. */
+block_sector_t sector;              /* Sector number of disk location. */
+int open_cnt;                       /* Number of openers. */
+bool removed;                       /* True if deleted, false otherwise. */
+int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
+        struct inode_disk data;             /* Inode content. */
+
+
+        /* Added by Group 51 */
+        struct indirect_L1 L1;
+        struct indirect_L2 L2;
+}
+
+10) What is the maximum size of a file supported by your inode structure? Show
+   your work.
+
+
+
+
+
+11) Explain how your code avoids a race if two processes attempt to extend a file
+   at the same time.
+
+
+We will use a lock on the file being modified to ensure that all write operations complete without interruption. As a result, the first process that manages to extend the file will cause the second process to wait until it finishes.
+
+12) Suppose processes A and B both have file F open, both positioned at
+   end-of-file. If A reads and B writes F at the same time, A may read all,
+   part, or none of what B writes. However, A may not read data other than what
+   B writes, e.g. if B writes nonzero data, A is not allowed to see all zeros.
+   Explain how your code avoids this race.
+
+
+Although A reads and B writes to F at the same time, only one of the two will have the CPU at a particular time. If A gets the CPU before B, there could be further reads of F but no further writes, so the read would return no bytes since it was passed an EOF. During reading, we would also block writes using a data lock. This would cause write requests to wait until the read is done. If B gets the CPU before A, since we make the write operation atomic using locks, no other operations (neither read nor write) can interrupt it, eliminating any race conditions.
+
+13) Is your synchronization design "fair"? If so, explain how your
+   synchronization design provides fairness. If not, explain how you could add
+   fairness to your design. File access is "fair" if readers cannot indefinitely
+   block writers or vice versa. That is, many processes reading from a file
+   cannot prevent forever another process from writing the file, and many
+   processes writing to a file cannot prevent another process forever from
+   reading the file.
+
+
+Yes, our synchronization design is fair so long as multiple readers/writers are allowed to acquire the data lock. This allows multiple reader/writers to have interleaving behavior when a lock is released and acquired by a new one. The only case fairness would not be preserved is if the write lock is being held and not released.  This could be solved by eliminating a write lock, which would result in any readers having not up to date data if something is written. 
+
+14) Is your inode structure a multilevel index? If so, why did you choose this
+   particular combination of direct, indirect, and doubly indirect blocks? If
+   not, why did you choose an alternative inode structure, and what advantages
+   and disadvantages does your structure have, compared to a multilevel index?
+
+
+Yes, in inode_disk, we have added three main fields. The first points to an array that contains pointers to data blocks. This is our direct blocks. The second points to a block that contains pointers to data blocks. This is our indirect block. The third pointers to a block that contains pointers to blocks containing pointers to data blocks. This is our doubly indirect block. We chose this combination for both speed and capacity. Most files are small, and this case is optimized since we would put the data for small files in direct blocks. However, to handle relatively large file sizes, once our direct blocks are full, we have two layers of indirection to use for additional block space.
+
+Subdirectories
+==============
+
+15) Copy here the declaration of each new or changed 'struct' or 'struct' member,
+   global or static variable, 'typedef', or enumeration. Identify the purpose
+   of each in 25 words or less.
+
+struct thread 
+{
+        /* Current Working Directory */
+        struct dir* working_dir; /* struct dir inside directory.c */
+};
+
+
+struct inode
+{
+        struct lock inode_lock; /* When any operation is attempted on a directory, it must acquire this lock */
+int type; /* 0 is a file, 1 is a directory */
+}
+
+16) Describe your code for traversing a user-specified path. How do traversals
+   of absolute and relative paths differ?
+
+To traverse a user specified path there's 3 cases: relative directory path, absolute directory path, and the special case (‘.’ and ‘..’).  
+
+
+We check for the special cases first, where if we encounter a ‘.’, then we just check if there is a valid file or directory after ‘./’ within the current directory.  If we encounter ‘..’ we then change the directory to the parent, which requires us to keep track of the parent of each directory.  We can then at the next few characters to resolve the rest of the path.
+
+
+To handle the absolute and relative case is fairly simple.  We check the first character, and if it’s a ‘~’, then we know it’s an absolute address, so we resolve the following directories starting from the root. Otherwise, we interpret the path as relative, and check to see if the given directory is within the current working directory.
+
+17) How do you prevent races on directory entries? For example, only one of two
+   simultaneous attempts to remove a single file should succeed, as should only
+   one of two simultaneous attempts to create a file with the same name, and so
+   on.
+
+We have added a lock to the inode struct. Whenever an inode is being modified such as a file deletion or directory creation we use the inode_lock to make sure only one thread can make an action at a time.  This solves any race condition. 
+
+
+18) Does your implementation allow a directory to be removed if it is open by a
+   process or if it is in use as a process's current working directory? If so,
+   what happens to that process's future file system operations? If not, how do
+   you prevent it?
+
+
+No. If a directory is open or the current working directory of any process, we prevent its removal in any process. To do so, we maintain a file descriptor array in the kernel that is shared among all processes. This file descriptor array would specifically indicate whether there is an open directory at the array’s index (indicated by a “1”). If a process wants to remove a directory X, it would index the array by directory X’s fd value, check the value in that index, and only if it is 0, remove the directory. When other processes open a directory or navigate to one as its current working directory, they similarly index the array and set the value to 1.
+
+19) Explain why you chose to represent the current directory of a process the
+   way you did.
+
+
+There isn’t too much complexity to it, all we did was store a directory pointer in the thread struct. This allows each thread to have it’s own current working directory, and it to be easily accessible at any point.  All is required to check is making a call to current thread and looking at the pointer. Also, when fork() is called to fork a new thread, the new thread adopts the calling thread’s current directory.
+
+Student Testing
+===============
+
+20) Describe your testing plan for your buffer cache. For each of your two test
+   cases, describe how your test works, describe the expected output, and if
+   you need any new syscalls to support your test, describe them.
+
+
+1.    Measuring the cache hit rate.
+   1. We will use the first test provided by in the spec and check the hit/miss rate by counting how many times the process goes to memory to fetch its data. First, reset the buffer cache. Open a file and read it sequentially, to determine the cache hit rate for a cold cache. Then, close it, re-open it, and read it sequentially again, to make sure that the cache hit rate improves. 
+   2. We will test this in three different cases to ensure proper behavior. The three cases are:
+      1. (file_size <= cache_size) → hit rate :100%
+      2. (cache_size < file_size < 2*cache_size) 
+     hit rate : ((2 * cache size - file size)/file size) * 100
+     0% < hit rate < 100%
+      1. (2*cache_size <= file_size) → hit rate : 0%
+1. Test the buffer cache’s ability to write full blocks to disk without reading them first. 
+   1. If you are, for example, writing 100KB (200 blocks) to a file, your buffer cache should perform 200 calls to block_write, but 0 calls to block_read, since exactly 200 blocks worth of data are being written. (Read operations on inode metadata are still acceptable.) As mentioned earlier, each block device keeps a read_cnt counter and a write_cnt counter. You can use this to verify that your buffer cache does not introduce unnecessary block reads. 
+   2. We will test this by adding the read_cnt and write_cnt fields to the cache block struct to keep the counter and verify that the proper amount of writes and reads are happening.

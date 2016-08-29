@@ -1,0 +1,110 @@
+• What is the value of argv? (hint: print argv)
+
+(gdb) p argv
+$1 = (char **) 0x7fffffffe618
+
+Pointer to argument vector.
+
+
+• What is pointed to by argv? (hint: print argv[0])
+
+(gdb) p *argv
+$2 = 0x7fffffffe840 "/home/vagrant/code/personal/hw0/wc"
+
+argv points one-dimensional array of strings which were passes to the program.
+argv[0] in this case is directory of wc.
+
+
+• What is the address of the function main?
+
+(gdb) p main
+$3 = (int (*)(int, char **, char **)) 0x40069d <main>
+
+
+• Try info stack. Explain what you see.
+
+(gdb) info stack
+#0  __libc_start_main (main=0x40069d <main>, argc=2, argv=0x7fffffffe618, 
+    init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, 
+    stack_end=0x7fffffffe608) at libc-start.c:321
+#1  0x00000000004005d9 in _start ()
+
+I see the stacks of this program and they grow downwards.
+0x40069d -> 0x00000000004005d9
+
+
+• Try info frame. Explain what you see.
+
+(gdb) info frame
+Stack level 0, frame at 0x7fffffffe600:
+ rip = 0x7ffff7a36ec5 in __libc_start_main (libc-start.c:321); 
+    saved rip = 0x4005d9
+ called by frame at 0x0
+ source language c.
+ Arglist at 0x7fffffffe538, args: main=0x40069d <main>, argc=2, 
+    argv=0x7fffffffe618, init=<optimized out>, fini=<optimized out>, 
+    rtld_fini=<optimized out>, stack_end=0x7fffffffe608
+ Locals at 0x7fffffffe538, Previous frame's sp is 0x7fffffffe600
+ Saved registers:
+  rbx at 0x7fffffffe5d0, rbp at 0x7fffffffe5d8, r12 at 0x7fffffffe5e0,
+  r13 at 0x7fffffffe5e8, r14 at 0x7fffffffe5f0, rip at 0x7fffffffe5f8
+
+
+-Stack level 0
+	frame num in backtrace, 0 is current executing frame, which grows downwards, in consistence with the stack
+
+-frame at 0x7fffffffe600
+	starting memory address of this stack frame
+
+-rip = 0x7ffff7a36ec5 in __libc_start_main (libc-start.c:321); 
+    rip is the register for next instruction to execute (also called program counter). so at this moment, the next to execute is at "0x7ffff7a36ec5", which is line 321 of libc-start.c.
+
+-saved rip = 0x4005d9
+	saved rip "0x4005d9" is so called "return address", i.e., the instruction to resume in caller stack frame after returning from this callee stack. It is pushed into stack upon "CALL" instruction (save it for return).
+
+-called by frame at 0x0
+	the address of the caller stack frame
+
+-source language c
+	which language in use
+
+-Arglist at 0x7fffffffe538
+	the starting address of arguments
+
+-Locals at 0x7fffffffe538
+	address of local variables
+
+-Previous frame's sp is 0x7fffffffe600
+	this is where the previous frame´s stack pointer point to (the caller frame, at the moment of calling, it is also the starting memory address of called stack frame.
+
+
+• Try info registers. Which registers are holding aspects of the program that you recognize?
+
+(gdb) info registers
+rax            0x0	0
+rbx            0x0	0
+rcx            0x7ffff7b00870	140737348896880
+rdx            0x7ffff7dd59e0	140737351866848
+rsi            0x7ffff7ff7000	140737354100736
+rdi            0x1	1
+rbp            0x0	0x0
+rsp            0x7fffffffe540	0x7fffffffe540
+r8             0x7ffff7dd59e0	140737351866848
+r9             0x0	0
+r10            0x7fffffffe2b0	140737488347824
+r11            0x246	582
+r12            0x4005b0	4195760
+r13            0x7fffffffe610	140737488348688
+r14            0x0	0
+r15            0x0	0
+rip            0x7ffff7a36ec5	0x7ffff7a36ec5 <__libc_start_main+245>
+eflags         0x246	[ PF ZF IF ]
+cs             0x33	51
+ss             0x2b	43
+ds             0x0	0
+es             0x0	0
+fs             0x0	0
+gs             0x0	0
+
+
+registers holding aspects of the program : rcx, rdx, rsi, rsp, r8, r10, r12, r13, rip

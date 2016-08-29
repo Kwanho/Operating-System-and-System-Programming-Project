@@ -1,0 +1,53 @@
+﻿CS 162 Project 3 Final Report
+The changes you made since your initial design doc and why you made them (feel free to re-iterate what you discussed with your TA in the design review).
+
+
+Buffer Cache:
+At a high level, we had the correct idea for the buffer cache intact in our design doc. Where we deviated however is in implementing particular features, and making our implementation as simple and efficient as possible. For one, instead of using the provided List type for the cache, we used an array that held our custom struct cache_entry. This removed unnecessary complexity and overhead.
+
+
+Within cache_entry, we also did not need an evicting bit. Our initial thought behind the evicting field was that it would prevent other threads from modifying it while it was in the process of being evicted from the cache. However, not only is this not properly synchronous, it was also unnecessary. Instead, we maintained a ref_count, that would increment when a cache entry was being read or written to. Once the operation was complete, the ref_count would decrement. We did the increment and decrement operations atomically via locks. 
+
+
+In addition, we also needed to add a lock to the clock algorithm. If the cache is full, we need to run our eviction process on the cache without interrupts. So, our second lock in buffer cache is on the “hand” of the clock algorithm. Before the clock algorithm runs, we acquire the lock, and only release when the hand of the clock has found the entry to evict from cache.
+
+
+Indexed and Extensible Files:
+
+
+We followed many of the similar principles set forth in our design doc except for a few key components.  It was recommended to us by Aleks to make the data variable a pointer, but later we felt this was over complicating things a bit.  We spoke with Roger in office hours and clarified a way to completely get rid of the data field and instead in the various inode functions, create a temporary struct inode_disk variable and populate it before writing to disk. 
+
+
+We also combined all the block_sector_t blocks into 1 array instead of having separate variables for direct, indirect, and doubly indirect blocks.  This allowed for us to just have special indexes that represented direct (0-99), indirect (100), and doubly indirect (101), and simply made the code easier to write.  We indicated in our design doc we would have 123 direct blocks, but only used 100.  The final major change we made was adding indexes to inode and inode_disk that represented where we were in the file.  Originally we used the cur_size and performed computation to figure out what block was next and if we needed to add a new block or use indirection, but then realized this was too complicated.  We changed to storing 3 indexes.  This allowed for us to track which direct block we were using or at what level of indirection we were at, and also at each layer of indirection what index it may be at.  This significantly improved code readability and debugging.  Ref old commits to see original strategy.
+
+
+The final change we made was instead of using struct indirect_L1 and L2 like we had in our design doc, we just used the plain array of block_sector_t since the only thing the struct did was add complexity. 
+
+
+In terms of non-data structure changes we made there weren’t too many.  Our lock approach in the design doc was exactly what we followed to prevent race conditions.
+
+
+Subdirectories: 
+
+
+    As for the struct modifications we kept it exactly the same as our initial design doc. We did modify the fd_table to take in an fd_entry pointer instead of a file pointer. This was changed in order to accommodate for the directories.
+    struct fd_entry{
+      void *fd_pointer;     /* struct file* or struct dir* */
+      int type;                  /* 0: file, 1:directory */
+   }
+    Because of time, we were unable to implement the ‘..’ and ‘.’ cases. But as for parsing, more specifically we resolve the directories by using the get_next_part function, opening directories, performing lookups and closing the directory afterwards to find the proper directory the file we’re dealing with resides in and the proper file name rather than the entire path. A big difference from our Design Doc is that the root starts if the path starts with a ‘/’ rather than a ‘~’. The Additionally, we also had to check specifically if the path is an empty string. 
+
+
+Syscalls:
+
+
+   A big modification that we did was to do the parsing of the path for opening files/dir in the syscall handler itself. We do this so that we have access to the inode of the file/dir and the precisely the name of the file/dir we’re opening. Additionally we use the inode locks instead of the io_locks we previously had. We also set the currently running thread’s current working directory because we have the correct pointer to the directory we open, chdir, or mkdir so we can easily tave the pointer to the cwd field of the thread.
+
+
+
+
+A reflection on the project -  What went well, what could be improved?
+In this project, we continued our effective strategy of breaking up work, and setting specific individuals or pairs to be responsible for particular parts. Being the third project, our group as a whole was far more comfortable with the use of Git, where for the most part, branches and merging were conducted effectively. One outstanding difference this time around was that we tried our best to make sure we all understood how to tackle each part at a middle-to-low level so that we could sanity-check each other’s proposals and code. As a result, no part of the project was approached in a completely wrong way that required significant reengineering at the last minute. 
+
+
+At the same time, we did not budget time well, and easily became overwhelmed with the time necessary to complete and debug each subsection. We found the spec to be particularly more cryptic than usual, and other class resources to be relatively unhelpful. In addition, the obscurity of certain errors, autograder tests, and recommended approaches led to a great deal of frustration. Though this is of course the result of it being the first time this was an official project, the lack of help from TAs slowed down and confused the entire assignment. Since most TAs did not have in depth experience or knowledge about the project, there lacked a dependable resource to assure any weariness about problems and solutions.

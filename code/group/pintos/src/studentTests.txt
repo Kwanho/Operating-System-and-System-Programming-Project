@@ -1,0 +1,110 @@
+Student Testing 1 (cache’s effectiveness):
+
+
+To reset the buffer cache, we used file named "testfile1" whose size is 60000. "testfile1" is big enough to flush out all previous data in buffer cache by reading it. We create files with various sizes(600, 3000, 40000) to observe how hit rate varies depending on the size of the file.
+
+Our buffer cache code keeps cache_read_cnt and cache_hit_cnt. Before we start our examination, we reset the counters to 0. Then, every time we try to read something from cache, no matter it’s in cache or not, cache_read_cnt is incremented. If the data we want is found in cache, we increment cache_hit_cnt as well. Thus, we can calculate hit rate by dividing cache_hit_cnt by cache_read_cnt.
+
+In our test code, we first reset our buffer cache by reading file 1. Then, open and read "testfile2" whose size is 600 bytes. Since this is the first time "testfile2" is read, cache hit count should be "0" . We close, re-open, and re-read the file. Since 600 bytes is very small compared to cache size, the whole file should be still in cache and cache hit count and cache read count should be the same. Our output says 2/2 hit rate which is 100%.
+
+We repeat the same test with "testfile3" and "testfile4" whose sizes are 3000 and 40000 respectively. We expect hit rate to go down as the file size is increasing. "testfile3" gets 5/10 (50%) and "testfile4" gets 6/155 (4%).
+
+
+two potential kernel bugs :
+- If we tried to get the values of cache directly not by calling syscall, we would have an error.
+- If our cache was not correctly implemented, hit rate would have not decreased as the file size is increasing
+
+
+
+Added syscalls for student test 1 :
+void reset_cache_count (void);      /* reset cache counters to 0 */
+int get_cache_read_count (void);  /* return cache_read_cnt of buffer cache */
+int get_cache_hit_count (void);     /* return cache_write_cnt of buffer cache */
+
+
+**************************** output of student test 1 ****************************
+Executing 'student-test-1':
+(student-test-1) begin
+(student-test-1) create "testfile1" with size "60000"
+(student-test-1) create "testfile2" with size "600"
+(student-test-1) create "testfile3" with size "3000"
+(student-test-1) create "testfile4" with size "40000"
+(student-test-1) ******** file 2 (size : 600) ********
+(student-test-1) reset cache by reading file 1
+(student-test-1) open "testfile2"
+(student-test-1) read "testfile2"
+(student-test-1) file 2 (first time) : cache hit count "0"
+(student-test-1) file 2 (first time) : cache read count "4"
+(student-test-1) close "testfile2"
+(student-test-1) re-open "testfile2"
+(student-test-1) re-read "testfile2"
+(student-test-1) file 2 (second time) : cache hit count "2"
+(student-test-1) file 2 (second time) : cache read count "2"
+(student-test-1) close "testfile2"
+(student-test-1) ******** file 3 (size : 3000) ********
+(student-test-1) reset cache by reading file 1
+(student-test-1) open "testfile3"
+(student-test-1) read "testfile3"
+(student-test-1) file 3 (first time) : cache hit count "0"
+(student-test-1) file 3 (first time) : cache read count "12"
+(student-test-1) close "testfile3"
+(student-test-1) re-open "testfile3"
+(student-test-1) re-read "testfile3"
+(student-test-1) file 3 (second time) : cache hit count "5"
+(student-test-1) file 3 (second time) : cache read count "10"
+(student-test-1) close "testfile3"
+(student-test-1) ******** file 4 (size : 40000) ********
+(student-test-1) reset cache by reading file 1
+(student-test-1) open "testfile4"
+(student-test-1) read "testfile4"
+(student-test-1) file 4 (first time) : cache hit count "0"
+(student-test-1) file 4 (first time) : cache read count "158"
+(student-test-1) close "testfile4"
+(student-test-1) re-open "testfile4"
+(student-test-1) re-read "testfile4"
+(student-test-1) file 4 (second time) : cache hit count "6"
+(student-test-1) file 4 (second time) : cache read count "155"
+(student-test-1) close "testfile4"
+(student-test-1) end
+student-test-1: exit(0)
+Execution of 'student-test-1' complete.
+************************************************************************************
+
+
+
+
+Student Testing 2 (cache’s ability to write full blocks to disk without reading them first):
+
+
+We create a file with size 5000 bytes and open it. We call get_stats() before and after writing 1536 bytes of data which is exactly 3 blocks. write count should have been incremented by 3 and read count should stay still.
+
+before writing 3 blocks of data : 46 reads, 845 writes
+after writing 3 blocks of data : 46 reads, 848 writes
+
+There were 3 writes and 0 read.
+
+
+two potential kernel bugs :
+- If read was called somewhere, read count should have been incremented.
+- If unnecessarily additional write was called somewhere, write count should have been incremented by more than 3.
+
+
+Added syscalls for student test 2 :
+void get_stats (void);
+
+**************************** output of student test 2 ****************************
+Executing 'student-test-2':
+(student-test-2) begin
+(student-test-2) create "testfile2"
+(student-test-2) open "testfile2"
+(student-test-2) seek "testfile2"
+hdb1 (filesys): 46 reads, 845 writes
+hda2 (scratch): 236 reads, 2 writes
+(student-test-2) write "testfile2"
+hdb1 (filesys): 46 reads, 848 writes
+hda2 (scratch): 236 reads, 2 writes
+(student-test-2) close "testfile2"
+(student-test-2) end
+student-test-2: exit(0)
+Execution of 'student-test-2' complete.
+************************************************************************************
